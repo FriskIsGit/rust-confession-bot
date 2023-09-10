@@ -1,0 +1,13 @@
+[package]
+name = "rust-confession-bot"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rand = "0.8.5"
+tokio = { version = "1.21.2", features = ["macros", "rt-multi-thread"] }
+
+[dependencies.serenity]
+version = "0.11"
+default-features = false
+features = ["builder", "cache", "client", "gateway", "http", "model", "utils", "rustls_backend"]
