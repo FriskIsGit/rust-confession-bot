@@ -1,10 +1,6 @@
-use std::any::Any;
-use std::cell::UnsafeCell;
-use std::io::ErrorKind::Interrupted;
-use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU32, Ordering};
 use serenity::async_trait;
-use serenity::builder::{CreateApplicationCommand, CreateApplicationCommandOption, CreateEmbed, CreateInteractionResponse};
+use serenity::builder::{ CreateApplicationCommandOption};
 use serenity::client::{Context, EventHandler};
 use serenity::model::application::command::{Command, CommandOptionType};
 use serenity::model::channel::{Message};
