@@ -4,7 +4,6 @@ use event_manager::{ConfessionCount, Handler};
 use serenity::prelude::*;
 use std::sync::atomic::AtomicUsize;
 
-const TOKEN: &str = "Ask to Ask";
 // (/.,.                                             
 //  *##.,**.                                 ///..*&&
 // /,(#%(.,.                                 **%&&%/,
@@ -27,8 +26,10 @@ const TOKEN: &str = "Ask to Ask";
 
 #[tokio::main]
 async fn main() {
+    let token = std::fs::read_to_string("token.txt").expect("Failed to read token file"); 
+
     let intents = GatewayIntents::non_privileged() | GatewayIntents::MESSAGE_CONTENT;
-    let mut client = Client::builder(TOKEN, intents)
+    let mut client = Client::builder(&token, intents)
         .event_handler(Handler::new())
         .await
         .expect("Error creating client");
