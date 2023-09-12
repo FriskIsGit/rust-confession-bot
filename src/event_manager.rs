@@ -1,7 +1,7 @@
 use rand::Rng;
 use serenity::{
     async_trait,
-    builder::CreateApplicationCommandOption,
+    builder::{CreateApplicationCommandOption, CreateEmbed},
     client::{Context, EventHandler},
     model::{
         application::{
@@ -10,11 +10,15 @@ use serenity::{
         },
         channel::Message,
         gateway::Ready,
-        prelude::application_command::CommandDataOptionValue
+        prelude::application_command::CommandDataOptionValue,
     },
-    utils::Color, prelude::TypeMapKey,
+    prelude::TypeMapKey,
+    utils::Color,
 };
-use std::sync::{atomic::{Ordering, AtomicUsize}, Arc};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 
 pub struct ConfessionCount;
 impl TypeMapKey for ConfessionCount {
@@ -32,7 +36,7 @@ impl Handler {
             println!("[{}] {}", msg.author.name, msg.content)
         } else if !msg.attachments.is_empty() {
             println!("[{}] {}", msg.author.name, msg.attachments[0].url);
-        } 
+        }
     }
 }
 
@@ -76,7 +80,9 @@ impl ConfessionCommands {
                 .description("Confess your sins anonymously")
                 .add_option(text_option)
                 .add_option(attachment_option)
-        }).await.expect("Unable to register the confess command");
+        })
+        .await
+        .expect("Unable to register the confess command");
 
         let message_id_option = CreateApplicationCommandOption::default()
             .name("message_id")
@@ -90,7 +96,9 @@ impl ConfessionCommands {
                 .name("delete")
                 .description("Delete your thought silently")
                 .add_option(message_id_option)
-        }).await.expect("Unable to register the delete command");
+        })
+        .await
+        .expect("Unable to register the delete command");
 
         let user_option = CreateApplicationCommandOption::default()
             .name("user")
@@ -112,14 +120,19 @@ impl ConfessionCommands {
                 .description("Report user")
                 .add_option(user_option)
                 .add_option(reason_option)
-        }).await.expect("Unable to register the report command");
+        })
+        .await
+        .expect("Unable to register the report command");
     }
 
     pub async fn confess(context: Context, command: ApplicationCommandInteraction) {
         println!("Confess command from: {}", command.user.name);
         println!("Options len: {}", command.data.options.len());
 
-        command.defer_ephemeral(&context.http).await.expect("Failed to defer");
+        command
+            .defer_ephemeral(&context.http)
+            .await
+            .expect("Failed to defer");
 
         let options = &command.data.options;
         let text_option = &options[0].resolved;
@@ -130,46 +143,40 @@ impl ConfessionCommands {
 
         let confession_count = {
             let data = context.data.read().await;
-            let counter = data.get::<ConfessionCount>()
+            let counter = data
+                .get::<ConfessionCount>()
                 .expect("Failed to get ConfessionCount")
                 .clone();
             counter.fetch_add(1, Ordering::Relaxed)
         };
 
-        command.channel_id.send_message(&context.http, |msg| {
+        command.channel_id.send_message(&context.http, |message| {
             let mut rng = rand::thread_rng();
-            let r = rng.gen_range(0..256) as u8;
-            let g = rng.gen_range(0..256) as u8;
-            let b = rng.gen_range(0..256) as u8;
+            let color = rng.gen();
+            let footer_text = "❗ If this confession is ToS-breaking or overtly hateful, you can report it using \"/report\"";
 
-            msg.embed(|embed| {
-                embed
-                    .title(format!("Anonymous Confession (#{})", confession_count))
-                    .description(text)
-                    .footer(|footer| {
-                        footer.text("❗ If this confession is ToS-breaking or overtly hateful, you can report it using \"/report\"")
-                    })
-                    .color(Color::from_rgb(r, g, b));
+            let mut embed = CreateEmbed::default()
+                .title(format!("Anonymous Confession (#{})", confession_count))
+                .description(text)
+                .footer(|footer| footer.text(footer_text))
+                .color(Color::new(color))
+                .to_owned();
 
-                if command.data.options.len() > 1 {
-                    let attach_option = &options[1].resolved;
-                    if let Some(CommandDataOptionValue::Attachment(attachment)) = attach_option {
-                        println!("url: {}", attachment.url);
-                        embed.image(&attachment.url);
-                    }
+            if command.data.options.len() > 1 {
+                let attach_option = &options[1].resolved;
+                if let Some(CommandDataOptionValue::Attachment(attachment)) = attach_option {
+                    println!("url: {}", attachment.url);
+                    embed.image(&attachment.url);
                 }
-                embed
-            })
+            }
+
+            message.set_embed(embed)
         }).await.expect("Failed to send");
 
-        // command.create_interaction_response(&context.http, |interaction| {
-        //     interaction.interaction_response_data(|data| {
-        //         data.ephemeral(true).content(":white_check_mark: Your confession has been added!")
-        //     });
-        //     interaction
-        // }).await.expect("Unable to interact.");
-
-        command.delete_original_interaction_response(&context.http).await.expect("Failed to delete response");
+        command
+            .delete_original_interaction_response(&context.http)
+            .await
+            .expect("Failed to delete response");
     }
 
     pub async fn delete(_context: Context, command: ApplicationCommandInteraction) {
@@ -192,8 +199,8 @@ impl ConfessionCommands {
             println!("Command: {:?}", command);
             match command.data.name.as_str() {
                 "confess" => ConfessionCommands::confess(context, command).await,
-                "delete"  => ConfessionCommands::delete(context, command).await,
-                "report"  => ConfessionCommands::report(context, command).await,
+                "delete" => ConfessionCommands::delete(context, command).await,
+                "report" => ConfessionCommands::report(context, command).await,
                 _ => {}
             }
         }
