@@ -152,7 +152,7 @@ impl ConfessionCommands {
 
         command.channel_id.send_message(&context.http, |message| {
             let mut rng = rand::thread_rng();
-            let color = rng.gen();
+            let color = rng.gen_range(0..=0xFFFFFF);
             let footer_text = "❗ If this confession is ToS-breaking or overtly hateful, you can report it using \"/report\"";
 
             let mut embed = CreateEmbed::default()
