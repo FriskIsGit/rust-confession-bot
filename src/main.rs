@@ -35,7 +35,8 @@ async fn main() {
 
     {
         let mut data = client.data.write().await;
-        data.insert::<ConfessionCount>(Arc::new(AtomicUsize::new(0)));
+        let counter = Arc::new(AtomicUsize::new(1));
+        data.insert::<ConfessionCount>(counter);
     }
 
     // Start listening for events in less than 2500 servers.

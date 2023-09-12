@@ -119,15 +119,10 @@ impl ConfessionCommands {
         println!("Confess command from: {}", command.user.name);
         println!("Options len: {}", command.data.options.len());
 
+        command.defer_ephemeral(&context.http).await.expect("Failed to defer");
+
         let options = &command.data.options;
         let text_option = &options[0].resolved;
-
-        command.create_interaction_response(&context.http, |interaction| {
-            interaction.interaction_response_data(|data| {
-                data.ephemeral(true).content(":white_check_mark: Your confession has been added!")
-            });
-            interaction
-        }).await.expect("Unable to interact.");
 
         let Some(CommandDataOptionValue::String(text)) = text_option else {
             return;
@@ -138,7 +133,6 @@ impl ConfessionCommands {
             let counter = data.get::<ConfessionCount>()
                 .expect("Failed to get ConfessionCount")
                 .clone();
-
             counter.fetch_add(1, Ordering::Relaxed)
         };
 
@@ -167,6 +161,15 @@ impl ConfessionCommands {
                 embed
             })
         }).await.expect("Failed to send");
+
+        // command.create_interaction_response(&context.http, |interaction| {
+        //     interaction.interaction_response_data(|data| {
+        //         data.ephemeral(true).content(":white_check_mark: Your confession has been added!")
+        //     });
+        //     interaction
+        // }).await.expect("Unable to interact.");
+
+        command.delete_original_interaction_response(&context.http).await.expect("Failed to delete response");
     }
 
     pub async fn delete(_context: Context, command: ApplicationCommandInteraction) {
