@@ -2,7 +2,7 @@ mod event_manager;
 
 use event_manager::{ConfessionCount, Handler};
 use serenity::prelude::*;
-use std::sync::{atomic::AtomicUsize, Arc};
+use std::sync::atomic::AtomicUsize;
 
 const TOKEN: &str = "Ask to Ask";
 // (/.,.                                             
@@ -35,7 +35,7 @@ async fn main() {
 
     {
         let mut data = client.data.write().await;
-        let counter = Arc::new(AtomicUsize::new(1));
+        let counter = AtomicUsize::new(1);
         data.insert::<ConfessionCount>(counter);
     }
 

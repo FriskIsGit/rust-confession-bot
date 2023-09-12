@@ -15,14 +15,11 @@ use serenity::{
     prelude::TypeMapKey,
     utils::Color,
 };
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub struct ConfessionCount;
 impl TypeMapKey for ConfessionCount {
-    type Value = Arc<AtomicUsize>;
+    type Value = AtomicUsize;
 }
 
 pub struct Handler;
@@ -145,21 +142,20 @@ impl ConfessionCommands {
             let data = context.data.read().await;
             let counter = data
                 .get::<ConfessionCount>()
-                .expect("Failed to get ConfessionCount")
-                .clone();
+                .expect("Failed to get ConfessionCount");
             counter.fetch_add(1, Ordering::Relaxed)
         };
 
         command.channel_id.send_message(&context.http, |message| {
             let mut rng = rand::thread_rng();
-            let color = rng.gen_range(0..=0xFFFFFF);
+            let rgb_color = rng.gen_range(0..=0xFFFFFF);
             let footer_text = "❗ If this confession is ToS-breaking or overtly hateful, you can report it using \"/report\"";
 
             let mut embed = CreateEmbed::default()
                 .title(format!("Anonymous Confession (#{})", confession_count))
                 .description(text)
                 .footer(|footer| footer.text(footer_text))
-                .color(Color::new(color))
+                .color(Color::new(rgb_color))
                 .to_owned();
 
             if command.data.options.len() > 1 {
