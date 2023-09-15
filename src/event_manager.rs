@@ -133,9 +133,7 @@ impl ConfessionCommands {
                 .description("Report user")
                 .add_option(user_option)
                 .add_option(reason_option)
-        })
-            .await
-            .expect("Unable to register the report command");
+        }).await.expect("Unable to register the report command");
     }
 
     pub async fn confess(context: Context, command: ApplicationCommandInteraction) {
@@ -252,14 +250,17 @@ impl ConfessionCommands {
     }
 
     pub async fn report(context: Context, command: ApplicationCommandInteraction) {
-        let name = command.user.name;
-        let content = format!("{name} tried to report a confession");
+        let name = &command.user.name;
+        let content = format!("{name} tried to report a user");
 
-        command
-            .channel_id
-            .send_message(&context.http, |msg| msg.content(content))
-            .await
-            .expect("Message wasd not sent.");
+        command.channel_id
+            .send_message(&context.http, |msg| msg.content(content)).await
+            .expect("Message was not sent.");
+
+        command.defer_ephemeral(&context.http).await
+            .expect("Unable to defer to delete interaction later");
+        command.delete_original_interaction_response(&context.http).await
+            .expect("Unable to close interaction")
     }
 
     pub async fn resolve_interaction(context: Context, interaction: Interaction) {
