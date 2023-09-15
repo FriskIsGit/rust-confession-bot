@@ -1,4 +1,8 @@
+use std::collections::hash_map::RandomState;
+use std::collections::HashMap;
+use std::default::Default;
 use rand::Rng;
+
 use serenity::{
     async_trait,
     builder::{CreateApplicationCommandOption, CreateEmbed},
@@ -16,13 +20,18 @@ use serenity::{
     utils::Color,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use once_cell::sync::Lazy;
+use serenity::model::id::MessageId;
 
 pub struct ConfessionCount;
+
 impl TypeMapKey for ConfessionCount {
     type Value = AtomicUsize;
 }
 
 pub struct Handler;
+
 impl Handler {
     pub fn new() -> Self {
         Self
@@ -54,7 +63,14 @@ impl EventHandler for Handler {
     }
 }
 
+//Mutex choice? std::sync, tokio::sync(https://github.com/tokio-rs/tokio/issues/2599)
+static mut CONFESSIONS_TO_USERS: Lazy<Mutex<HashMap<u64, u64>>> = Lazy::new(|| {
+    let m = HashMap::new();
+    Mutex::new(m)
+});
+
 pub struct ConfessionCommands;
+
 impl ConfessionCommands {
     pub async fn register_commands(context: Context) {
         let text_option = CreateApplicationCommandOption::default()
@@ -78,8 +94,8 @@ impl ConfessionCommands {
                 .add_option(text_option)
                 .add_option(attachment_option)
         })
-        .await
-        .expect("Unable to register the confess command");
+            .await
+            .expect("Unable to register the confess command");
 
         let message_id_option = CreateApplicationCommandOption::default()
             .name("message_id")
@@ -94,8 +110,8 @@ impl ConfessionCommands {
                 .description("Delete your thought silently")
                 .add_option(message_id_option)
         })
-        .await
-        .expect("Unable to register the delete command");
+            .await
+            .expect("Unable to register the delete command");
 
         let user_option = CreateApplicationCommandOption::default()
             .name("user")
@@ -118,8 +134,8 @@ impl ConfessionCommands {
                 .add_option(user_option)
                 .add_option(reason_option)
         })
-        .await
-        .expect("Unable to register the report command");
+            .await
+            .expect("Unable to register the report command");
     }
 
     pub async fn confess(context: Context, command: ApplicationCommandInteraction) {
@@ -146,7 +162,7 @@ impl ConfessionCommands {
             counter.fetch_add(1, Ordering::Relaxed)
         };
 
-        command.channel_id.send_message(&context.http, |message| {
+        let delivered_msg = command.channel_id.send_message(&context.http, |message| {
             let mut rng = rand::thread_rng();
             let rgb_color = rng.gen_range(0..=0xFFFFFF);
             let footer_text = "❗ If this confession is ToS-breaking or overtly hateful, you can report it using \"/report\"";
@@ -169,14 +185,70 @@ impl ConfessionCommands {
             message.set_embed(embed)
         }).await.expect("Failed to send");
 
+        unsafe {
+            CONFESSIONS_TO_USERS.lock().unwrap().insert(delivered_msg.id.0, command.user.id.0);
+        }
+
         command
             .delete_original_interaction_response(&context.http)
             .await
             .expect("Failed to delete response");
     }
 
-    pub async fn delete(_context: Context, command: ApplicationCommandInteraction) {
+    pub async fn delete(context: Context, command: ApplicationCommandInteraction) {
         println!("Delete command from: {}", command.user.name);
+
+        let options = &command.data.options;
+
+        let Some(CommandDataOptionValue::String(msg_id_str)) = &options[0].resolved else {
+            return;
+        };
+        let parse_result = msg_id_str.parse::<u64>();
+
+        if !parse_result.is_ok(){
+            command.create_interaction_response(&context.http, |response| {
+                response.interaction_response_data(|data| {
+                    data.content("Expected a positive number (usually 18-19 digits).").ephemeral(true)
+                })
+            }).await.expect("Unable to respond");
+            return;
+        }
+
+        let msg_id: u64 = parse_result.unwrap();
+        let mut authors_match = false;
+        let mut msg_exists = false;
+        unsafe {
+            let map_guard = CONFESSIONS_TO_USERS.lock().unwrap();
+            if let Some(actual_author_id) = map_guard.get(&msg_id) {
+                msg_exists = true;
+                authors_match = command.user.id.0 == *actual_author_id;
+            };
+        }
+
+        if !msg_exists {
+            command.create_interaction_response(&context.http, |response| {
+                response.interaction_response_data(|data| {
+                    data.content("Message with that id does not exist").ephemeral(true)
+                })
+            }).await.expect("Unable to respond");
+            return;
+        }
+
+        if authors_match {
+            command.channel_id.delete_message(&context.http, MessageId(msg_id))
+                .await.expect("Unable to delete");
+            command.create_interaction_response(&context.http, |response| {
+                response.interaction_response_data(|data| {
+                    data.content(":white_check_mark: Confession deleted.").ephemeral(true)
+                })
+            }).await.expect("Unable to respond");
+            return;
+        }
+        command.create_interaction_response(&context.http, |response| {
+            response.interaction_response_data(|data| {
+                data.content("You're not the author of that confession or message wasn't recorded").ephemeral(true)
+            })
+        }).await.expect("Unable to respond");
     }
 
     pub async fn report(context: Context, command: ApplicationCommandInteraction) {
