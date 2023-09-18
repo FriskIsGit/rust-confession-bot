@@ -160,7 +160,7 @@ impl ConfessionCommands {
             counter.fetch_add(1, Ordering::Relaxed)
         };
 
-        let delivered_msg = command.channel_id.send_message(&context.http, |message| {
+        let maybe_delivered = command.channel_id.send_message(&context.http, |message| {
             let mut rng = rand::thread_rng();
             let rgb_color = rng.gen_range(0..=0xFFFFFF);
             let footer_text = "❗ If this confession is ToS-breaking or overtly hateful, you can report it using \"/report\"";
@@ -181,10 +181,18 @@ impl ConfessionCommands {
             }
 
             message.set_embed(embed)
-        }).await.expect("Failed to send");
+        }).await;
+
+        let Ok(delivered) = maybe_delivered else{
+            let err = maybe_delivered.unwrap_err();
+            command.edit_original_interaction_response(&context.http, |edit| {
+                edit.content(err.to_string())
+            }).await.expect("Unable to edit");
+            return;
+        };
 
         unsafe {
-            CONFESSIONS_TO_USERS.lock().unwrap().insert(delivered_msg.id.0, command.user.id.0);
+            CONFESSIONS_TO_USERS.lock().unwrap().insert(delivered.id.0, command.user.id.0);
         }
 
         command
