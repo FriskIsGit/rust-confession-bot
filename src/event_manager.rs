@@ -66,10 +66,10 @@ impl EventHandler for Handler {
 }
 
 //Mutex choice? std::sync, tokio::sync(https://github.com/tokio-rs/tokio/issues/2599)
-type ConfessionLock = Mutex<HashMap<u64, u64>>;
-static mut CONFESSIONS_TO_USERS: OnceLock<ConfessionLock> = OnceLock::new();
+type ConcurrentMap = Mutex<HashMap<u64, u64>>;
+static mut CONFESSIONS_TO_USERS: OnceLock<ConcurrentMap> = OnceLock::new();
 
-fn create_confession_data() -> ConfessionLock {
+fn create_confession_data() -> ConcurrentMap {
     let data = HashMap::new();
     Mutex::new(data)
 }
