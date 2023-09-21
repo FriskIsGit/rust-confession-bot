@@ -1,7 +1,12 @@
-use std::collections::hash_map::RandomState;
-use std::collections::HashMap;
-use std::default::Default;
 use rand::Rng;
+use std::{
+    collections::HashMap,
+    default::Default,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Mutex, OnceLock,
+    },
+};
 
 use serenity::{
     async_trait,
@@ -14,15 +19,12 @@ use serenity::{
         },
         channel::Message,
         gateway::Ready,
+        id::MessageId,
         prelude::application_command::CommandDataOptionValue,
     },
     prelude::TypeMapKey,
     utils::Color,
 };
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
-use once_cell::sync::Lazy;
-use serenity::model::id::MessageId;
 
 pub struct ConfessionCount;
 
@@ -64,10 +66,13 @@ impl EventHandler for Handler {
 }
 
 //Mutex choice? std::sync, tokio::sync(https://github.com/tokio-rs/tokio/issues/2599)
-static mut CONFESSIONS_TO_USERS: Lazy<Mutex<HashMap<u64, u64>>> = Lazy::new(|| {
-    let m = HashMap::new();
-    Mutex::new(m)
-});
+type ConfessionLock = Mutex<HashMap<u64, u64>>;
+static mut CONFESSIONS_TO_USERS: OnceLock<ConfessionLock> = OnceLock::new();
+
+fn create_confession_data() -> ConfessionLock {
+    let data = HashMap::new();
+    Mutex::new(data)
+}
 
 pub struct ConfessionCommands;
 
@@ -93,9 +98,7 @@ impl ConfessionCommands {
                 .description("Confess your sins anonymously")
                 .add_option(text_option)
                 .add_option(attachment_option)
-        })
-            .await
-            .expect("Unable to register the confess command");
+        }).await.expect("Unable to register the confess command");
 
         let message_id_option = CreateApplicationCommandOption::default()
             .name("message_id")
@@ -109,9 +112,7 @@ impl ConfessionCommands {
                 .name("delete")
                 .description("Delete your thought silently")
                 .add_option(message_id_option)
-        })
-            .await
-            .expect("Unable to register the delete command");
+        }).await.expect("Unable to register the delete command");
 
         let user_option = CreateApplicationCommandOption::default()
             .name("user")
@@ -141,8 +142,7 @@ impl ConfessionCommands {
         println!("Options len: {}", command.data.options.len());
 
         command
-            .defer_ephemeral(&context.http)
-            .await
+            .defer_ephemeral(&context.http).await
             .expect("Failed to defer");
 
         let options = &command.data.options;
@@ -183,7 +183,7 @@ impl ConfessionCommands {
             message.set_embed(embed)
         }).await;
 
-        let Ok(delivered) = maybe_delivered else{
+        let Ok(delivered) = maybe_delivered else {
             let err = maybe_delivered.unwrap_err();
             command.edit_original_interaction_response(&context.http, |edit| {
                 edit.content(err.to_string())
@@ -192,12 +192,12 @@ impl ConfessionCommands {
         };
 
         unsafe {
-            CONFESSIONS_TO_USERS.lock().unwrap().insert(delivered.id.0, command.user.id.0);
+            let data = CONFESSIONS_TO_USERS.get_or_init(create_confession_data);
+            data.lock().unwrap().insert(delivered.id.0, command.user.id.0);
         }
 
         command
-            .delete_original_interaction_response(&context.http)
-            .await
+            .delete_original_interaction_response(&context.http).await
             .expect("Failed to delete response");
     }
 
@@ -205,16 +205,16 @@ impl ConfessionCommands {
         println!("Delete command from: {}", command.user.name);
 
         let options = &command.data.options;
-
         let Some(CommandDataOptionValue::String(msg_id_str)) = &options[0].resolved else {
             return;
         };
-        let parse_result = msg_id_str.parse::<u64>();
 
-        if !parse_result.is_ok(){
+        let parse_result = msg_id_str.parse::<u64>();
+        if parse_result.is_err() {
             command.create_interaction_response(&context.http, |response| {
                 response.interaction_response_data(|data| {
-                    data.content("Expected a positive number (usually 18-19 digits).").ephemeral(true)
+                    data.content("Expected a positive number (usually 18-19 digits).")
+                        .ephemeral(true)
                 })
             }).await.expect("Unable to respond");
             return;
@@ -224,7 +224,8 @@ impl ConfessionCommands {
         let mut authors_match = false;
         let mut msg_exists = false;
         unsafe {
-            let map_guard = CONFESSIONS_TO_USERS.lock().unwrap();
+            let data = CONFESSIONS_TO_USERS.get_or_init(create_confession_data);
+            let map_guard = data.lock().unwrap();
             if let Some(actual_author_id) = map_guard.get(&msg_id) {
                 msg_exists = true;
                 authors_match = command.user.id.0 == *actual_author_id;
@@ -241,8 +242,10 @@ impl ConfessionCommands {
         }
 
         if authors_match {
-            command.channel_id.delete_message(&context.http, MessageId(msg_id))
-                .await.expect("Unable to delete");
+            command.channel_id
+                .delete_message(&context.http, MessageId(msg_id)).await
+                .expect("Unable to delete");
+
             command.create_interaction_response(&context.http, |response| {
                 response.interaction_response_data(|data| {
                     data.content(":white_check_mark: Confession deleted.").ephemeral(true)
@@ -261,13 +264,15 @@ impl ConfessionCommands {
         let name = &command.user.name;
         let content = format!("{name} tried to report a user");
 
-        command.channel_id
-            .send_message(&context.http, |msg| msg.content(content)).await
+        command.channel_id .send_message(&context.http, |msg| msg.content(content)).await
             .expect("Message was not sent.");
 
-        command.defer_ephemeral(&context.http).await
+        command
+            .defer_ephemeral(&context.http).await
             .expect("Unable to defer to delete interaction later");
-        command.delete_original_interaction_response(&context.http).await
+
+        command
+            .delete_original_interaction_response(&context.http).await
             .expect("Unable to close interaction")
     }
 
@@ -276,8 +281,8 @@ impl ConfessionCommands {
             println!("Command: {:?}", command);
             match command.data.name.as_str() {
                 "confess" => ConfessionCommands::confess(context, command).await,
-                "delete" => ConfessionCommands::delete(context, command).await,
-                "report" => ConfessionCommands::report(context, command).await,
+                "delete"  => ConfessionCommands::delete(context, command).await,
+                "report"  => ConfessionCommands::report(context, command).await,
                 _ => {}
             }
         }
