@@ -67,7 +67,7 @@ impl EventHandler for Handler {
 
 //Mutex choice? std::sync, tokio::sync(https://github.com/tokio-rs/tokio/issues/2599)
 type ConcurrentMap = Mutex<HashMap<u64, u64>>;
-static mut CONFESSIONS_TO_USERS: OnceLock<ConcurrentMap> = OnceLock::new();
+static CONFESSIONS_TO_USERS: OnceLock<ConcurrentMap> = OnceLock::new();
 
 fn create_confession_data() -> ConcurrentMap {
     let data = HashMap::new();
@@ -191,10 +191,8 @@ impl ConfessionCommands {
             return;
         };
 
-        unsafe {
-            let data = CONFESSIONS_TO_USERS.get_or_init(create_confession_data);
-            data.lock().unwrap().insert(delivered.id.0, command.user.id.0);
-        }
+        let data = CONFESSIONS_TO_USERS.get_or_init(create_confession_data);
+        data.lock().unwrap().insert(delivered.id.0, command.user.id.0);
 
         command
             .delete_original_interaction_response(&context.http).await
@@ -223,7 +221,7 @@ impl ConfessionCommands {
         let msg_id: u64 = parse_result.unwrap();
         let mut authors_match = false;
         let mut msg_exists = false;
-        unsafe {
+        {
             let data = CONFESSIONS_TO_USERS.get_or_init(create_confession_data);
             let map_guard = data.lock().unwrap();
             if let Some(actual_author_id) = map_guard.get(&msg_id) {
