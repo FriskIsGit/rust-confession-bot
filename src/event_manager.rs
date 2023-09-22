@@ -207,20 +207,20 @@ impl ConfessionCommands {
             return;
         };
 
-        let parse_result = msg_id_str.parse::<u64>();
+        let parse_result = msg_id_str.parse();
         if parse_result.is_err() {
             command.create_interaction_response(&context.http, |response| {
                 response.interaction_response_data(|data| {
-                    data.content("Expected a positive number (usually 18-19 digits).")
-                        .ephemeral(true)
+                    data.content("Expected a positive number (usually 18-19 digits).").ephemeral(true)
                 })
             }).await.expect("Unable to respond");
             return;
         }
 
-        let msg_id: u64 = parse_result.unwrap();
+        let msg_id = parse_result.unwrap();
         let mut authors_match = false;
         let mut msg_exists = false;
+
         {
             let data = CONFESSIONS_TO_USERS.get_or_init(create_confession_data);
             let map_guard = data.lock().unwrap();
