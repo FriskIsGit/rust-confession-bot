@@ -3,7 +3,6 @@ use std::{
     collections::HashMap,
     default::Default,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Mutex, OnceLock,
     },
 };
@@ -22,15 +21,8 @@ use serenity::{
         id::MessageId,
         prelude::application_command::CommandDataOptionValue,
     },
-    prelude::TypeMapKey,
     utils::Color,
 };
-
-pub struct ConfessionCount;
-
-impl TypeMapKey for ConfessionCount {
-    type Value = AtomicUsize;
-}
 
 pub struct Handler;
 
@@ -68,7 +60,7 @@ impl EventHandler for Handler {
 type AuthorID = u64;
 type GuildID  = u64;
 type GuildData = Vec<(AuthorID, MessageID)>;
-//                         VVVVV hashmap should be rwlock or non-mutable (since it almost never gets locked for write)? 
+//                         vvvvv hashmap should be rwlock or non-mutable (since it almost never gets locked for write)? 
 type ConfessionNumberMap = Mutex<HashMap<GuildID, GuildData>>;
 //                    guild data could be mutex   ^^^^^^^^^   (one lock for each guild, doesn't affect others)
 static USER_CONFESSIONS_BY_NUMBER: OnceLock<ConfessionNumberMap> = OnceLock::new();
@@ -170,12 +162,15 @@ impl ConfessionCommands {
             return;
         };
 
+        let Some(guild_id) = command.guild_id else {
+            return
+        };
+
         let confession_count = {
-            let data = context.data.read().await;
-            let counter = data
-                .get::<ConfessionCount>()
-                .expect("Failed to get ConfessionCount");
-            counter.fetch_add(1, Ordering::Relaxed)
+            let data = USER_CONFESSIONS_BY_NUMBER.get_or_init(create_confession_number_data);
+            let mut lock = data.lock().unwrap();
+            let vec = lock.entry(guild_id.0).or_insert(Vec::new());
+            vec.len() + 1
         };
 
         let maybe_delivered = command.channel_id.send_message(&context.http, |message| {
@@ -212,9 +207,7 @@ impl ConfessionCommands {
         let data = CONFESSIONS_TO_USERS.get_or_init(create_confession_data);
         data.lock().unwrap().insert(delivered.id.0, command.user.id.0);
 
-        // NOTE: Could call this at the start of the function with `let Some() else {}` binding
-        //       since we don't want to run confession commands in non-guilds?
-        if let Some(guild_id) = command.guild_id {
+        {
             let data = USER_CONFESSIONS_BY_NUMBER.get_or_init(create_confession_number_data);
             let mut lock = data.lock().unwrap();
             let vec = lock.entry(guild_id.0).or_insert(Vec::new());
@@ -225,26 +218,6 @@ impl ConfessionCommands {
             .delete_original_interaction_response(&context.http).await
             .expect("Failed to delete response");
     }
-
-    // async fn get_confession_by_number(ctx: &Context, command: &ApplicationCommandInteraction, message: &str) -> Option<MessageID> {
-    //     let Ok(number) = message[1..].parse::<usize>() else {
-    //         return None
-    //     };
-    //
-    //     let Some(guild_id) = command.guild_id else {
-    //         return None
-    //     };
-    //
-    //     let data = USER_CONFESSIONS_BY_NUMBER.get_or_init(create_confession_number_data);
-    //     let mut lock = data.lock().unwrap();
-    //     let vec = lock.entry(guild_id.0).or_insert(Vec::new());
-    //     // NOTE: We should unlock after this get
-    //     let Some((author_id, message_id)) = vec.get(number) else {
-    //         return None
-    //     };
-    //
-    //     return None
-    // }
 
     pub async fn delete(context: Context, command: ApplicationCommandInteraction) {
         println!("Delete command from: {}", command.user.name);
@@ -261,7 +234,7 @@ impl ConfessionCommands {
             let Ok(number) = message[1..].parse::<usize>() else {
                 command.create_interaction_response(&context.http, |response| {
                     response.interaction_response_data(|data| {
-                        data.content("Incorrect input. If you want to delete your confession try puting correct confession number for example `/delete #12` to delete confession with number 12)").ephemeral(true)
+                        data.content("Incorrect input. If you want to delete your confession try puting correct confession number (for example use `/delete #12` to delete confession with number 12)").ephemeral(true)
                     })
                 }).await.expect("Unable to respond");
                 return
@@ -325,7 +298,7 @@ impl ConfessionCommands {
         }
 
         if authors_match {
-            // NOTE: Interaction failes when messgae was already deleted. This "could" be fixed?
+            // NOTE: Interaction fails when message was already deleted. This "could" be fixed?
             command.channel_id
                 .delete_message(&context.http, MessageId(message_id)).await
                 .expect("Unable to delete");

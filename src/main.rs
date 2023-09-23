@@ -1,8 +1,7 @@
 mod event_manager;
 
-use event_manager::{ConfessionCount, Handler};
+use event_manager::Handler;
 use serenity::prelude::*;
-use std::sync::atomic::AtomicUsize;
 
 //    (/.,.                                         . . .
 //     *##.,                                     //..*&&
@@ -33,12 +32,6 @@ async fn main() {
         .event_handler(Handler::new())
         .await
         .expect("Error creating client");
-
-    {
-        let mut data = client.data.write().await;
-        let counter = AtomicUsize::new(1);
-        data.insert::<ConfessionCount>(counter);
-    }
 
     // Start listening for events in less than 2500 servers.
     if let Err(why) = client.start().await {
