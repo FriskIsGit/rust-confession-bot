@@ -65,20 +65,12 @@ impl EventHandler for Handler {
     }
 }
 
-//
-// TODO: Delete by message number (ex. input: /delete #123)
-//
 type AuthorID = u64;
 type GuildID  = u64;
-type ConfessionNumber = u64;
-
-// Confession numbers are ascending anyways, so might store them as flat array?
-// type GuildData = HashMap<ConfessionNumber, AuthorID>;
-
-// Option to indicate whether already deleted (or maybe just set to 0)?
-//                   VVVVVV
-type GuildData = Vec<Option<AuthorID>>;
+type GuildData = Vec<(AuthorID, MessageID)>;
+//                         VVVVV hashmap should be rwlock or non-mutable (since it almost never gets locked for write)? 
 type ConfessionNumberMap = Mutex<HashMap<GuildID, GuildData>>;
+//                    guild data could be mutex   ^^^^^^^^^   (one lock for each guild, doesn't affect others)
 static USER_CONFESSIONS_BY_NUMBER: OnceLock<ConfessionNumberMap> = OnceLock::new();
 
 fn create_confession_number_data() -> ConfessionNumberMap {
@@ -127,8 +119,8 @@ impl ConfessionCommands {
         }).await.expect("Unable to register the confess command");
 
         let message_id_option = CreateApplicationCommandOption::default()
-            .name("message_id")
-            .description("Message id of the confession")
+            .name("confession")
+            .description("Message id or number of the confession (ex. #12 or 1154827563584209006)")
             .kind(CommandOptionType::String)
             .required(true)
             .to_owned();
@@ -220,43 +212,110 @@ impl ConfessionCommands {
         let data = CONFESSIONS_TO_USERS.get_or_init(create_confession_data);
         data.lock().unwrap().insert(delivered.id.0, command.user.id.0);
 
+        // NOTE: Could call this at the start of the function with `let Some() else {}` binding
+        //       since we don't want to run confession commands in non-guilds?
+        if let Some(guild_id) = command.guild_id {
+            let data = USER_CONFESSIONS_BY_NUMBER.get_or_init(create_confession_number_data);
+            let mut lock = data.lock().unwrap();
+            let vec = lock.entry(guild_id.0).or_insert(Vec::new());
+            vec.push((command.user.id.0, delivered.id.0))
+        }
+
         command
             .delete_original_interaction_response(&context.http).await
             .expect("Failed to delete response");
     }
 
+    // async fn get_confession_by_number(ctx: &Context, command: &ApplicationCommandInteraction, message: &str) -> Option<MessageID> {
+    //     let Ok(number) = message[1..].parse::<usize>() else {
+    //         return None
+    //     };
+    //
+    //     let Some(guild_id) = command.guild_id else {
+    //         return None
+    //     };
+    //
+    //     let data = USER_CONFESSIONS_BY_NUMBER.get_or_init(create_confession_number_data);
+    //     let mut lock = data.lock().unwrap();
+    //     let vec = lock.entry(guild_id.0).or_insert(Vec::new());
+    //     // NOTE: We should unlock after this get
+    //     let Some((author_id, message_id)) = vec.get(number) else {
+    //         return None
+    //     };
+    //
+    //     return None
+    // }
+
     pub async fn delete(context: Context, command: ApplicationCommandInteraction) {
         println!("Delete command from: {}", command.user.name);
 
         let options = &command.data.options;
-        let Some(CommandDataOptionValue::String(msg_id_str)) = &options[0].resolved else {
+        let Some(CommandDataOptionValue::String(message)) = &options[0].resolved else {
             return;
         };
 
-        let parse_result = msg_id_str.parse();
-        if parse_result.is_err() {
-            command.create_interaction_response(&context.http, |response| {
-                response.interaction_response_data(|data| {
-                    data.content("Expected a positive number (usually 18-19 digits).").ephemeral(true)
-                })
-            }).await.expect("Unable to respond");
-            return;
-        }
-
-        let msg_id = parse_result.unwrap();
         let mut authors_match = false;
-        let mut msg_exists = false;
+        let mut message_exists = false;
 
-        {
+        let message_id = if message.starts_with('#') {
+            let Ok(number) = message[1..].parse::<usize>() else {
+                command.create_interaction_response(&context.http, |response| {
+                    response.interaction_response_data(|data| {
+                        data.content("Incorrect input. If you want to delete your confession try puting correct confession number for example `/delete #12` to delete confession with number 12)").ephemeral(true)
+                    })
+                }).await.expect("Unable to respond");
+                return
+            };
+
+            let Some(guild_id) = command.guild_id else {
+                // command.create_interaction_response(&context.http, |response| {
+                //     response.interaction_response_data(|data| {
+                //         data.content("You can only use this bot in actual discord servers.").ephemeral(true)
+                //     })
+                // }).await.expect("Unable to respond");
+                return
+            };
+
+            let data = {
+                let data = USER_CONFESSIONS_BY_NUMBER.get_or_init(create_confession_number_data);
+                let mut lock = data.lock().unwrap();
+                let confessions = lock.entry(guild_id.0).or_insert(Vec::new());
+                let data = confessions.get(number - 1);
+                data.cloned()
+            }; 
+
+            let Some((author_id, message_id)) = data else {
+                command.create_interaction_response(&context.http, |response| {
+                    response.interaction_response_data(|data| {
+                        data.content("Failed to find the confession. Was the confession number correct?").ephemeral(true)
+                    })
+                }).await.expect("Unable to respond");
+                return
+            };
+
+            authors_match = author_id == command.user.id.0;
+            message_exists = true;
+            message_id
+        } else {
+            let Ok(message_id) = message.parse() else {
+                command.create_interaction_response(&context.http, |response| {
+                    response.interaction_response_data(|data| {
+                        data.content("Expected a positive number (usually 18-19 digits).").ephemeral(true)
+                    })
+                }).await.expect("Unable to respond");
+                return
+            };
+
             let data = CONFESSIONS_TO_USERS.get_or_init(create_confession_data);
             let map_guard = data.lock().unwrap();
-            if let Some(actual_author_id) = map_guard.get(&msg_id) {
-                msg_exists = true;
-                authors_match = command.user.id.0 == *actual_author_id;
+            if let Some(author_id) = map_guard.get(&message_id) {
+                message_exists = true;
+                authors_match = command.user.id.0 == *author_id;
             };
-        }
+            message_id
+        };
 
-        if !msg_exists {
+        if !message_exists {
             command.create_interaction_response(&context.http, |response| {
                 response.interaction_response_data(|data| {
                     data.content("Message with that id does not exist").ephemeral(true)
@@ -266,8 +325,9 @@ impl ConfessionCommands {
         }
 
         if authors_match {
+            // NOTE: Interaction failes when messgae was already deleted. This "could" be fixed?
             command.channel_id
-                .delete_message(&context.http, MessageId(msg_id)).await
+                .delete_message(&context.http, MessageId(message_id)).await
                 .expect("Unable to delete");
 
             command.create_interaction_response(&context.http, |response| {
