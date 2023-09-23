@@ -65,8 +65,34 @@ impl EventHandler for Handler {
     }
 }
 
+//
+// TODO: Delete by message number (ex. input: /delete #123)
+//
+type AuthorID = u64;
+type GuildID  = u64;
+type ConfessionNumber = u64;
+
+// Confession numbers are ascending anyways, so might store them as flat array?
+// type GuildData = HashMap<ConfessionNumber, AuthorID>;
+
+// Option to indicate whether already deleted (or maybe just set to 0)?
+//                   VVVVVV
+type GuildData = Vec<Option<AuthorID>>;
+type ConfessionNumberMap = Mutex<HashMap<GuildID, GuildData>>;
+static USER_CONFESSIONS_BY_NUMBER: OnceLock<ConfessionNumberMap> = OnceLock::new();
+
+fn create_confession_number_data() -> ConfessionNumberMap {
+    let data = HashMap::new();
+    Mutex::new(data)
+}
+
+//
+// TODO: Once every week clear messages that are older that 2 weeks since the bot cannot 
+//       delete them anyway (due to discord bot API limitation)
+//
 //Mutex choice? std::sync, tokio::sync(https://github.com/tokio-rs/tokio/issues/2599)
-type ConcurrentMap = Mutex<HashMap<u64, u64>>;
+type MessageID = u64;
+type ConcurrentMap = Mutex<HashMap<MessageID, AuthorID>>;
 static CONFESSIONS_TO_USERS: OnceLock<ConcurrentMap> = OnceLock::new();
 
 fn create_confession_data() -> ConcurrentMap {
